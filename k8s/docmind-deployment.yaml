@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docmind-app
+  namespace: docmind
+  labels:
+    app: docmind
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: docmind
+  template:
+    metadata:
+      labels:
+        app: docmind
+    spec:
+      containers:
+      - name: docmind
+        image: docmind-ai:latest # This would be replaced with actual registry URL
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8501
+          name: frontend
+        - containerPort: 8000
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: docmind-config
+        - secretRef:
+            name: docmind-secrets
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+        readinessProbe:
+          httpGet:
+            path: /_stcore/health
+            port: 8501
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /_stcore/health
+            port: 8501
+          initialDelaySeconds: 30
+          periodSeconds: 20

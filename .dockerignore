@@ -1,0 +1,15 @@
+venv/
+__pycache__/
+*.pyc
+.env
+.DS_Store
+chroma_db/
+*.pdf
+.git/
+.github/
+k8s/
+terraform/
+.dockerignore
+Dockerfile
+docker-compose.yml
+devops_agent.py

@@ -7,6 +7,28 @@ from langchain_community.llms import Ollama
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 import os
+from prometheus_client import start_http_server, Counter, Histogram
+import time
+
+# Metrics Definition
+# Streamlit reruns the script on every interaction, so we need to ensure metrics are only registered once
+if 'REQUEST_COUNT' not in st.session_state:
+    st.session_state.REQUEST_COUNT = Counter('docmind_requests_total', 'Total number of requests to DocMind')
+    st.session_state.PROCESSING_TIME = Histogram('docmind_processing_seconds', 'Time spent processing documents')
+    st.session_state.LLM_LATENCY = Histogram('docmind_llm_response_seconds', 'Time spent waiting for LLM response')
+
+REQUEST_COUNT = st.session_state.REQUEST_COUNT
+PROCESSING_TIME = st.session_state.PROCESSING_TIME
+LLM_LATENCY = st.session_state.LLM_LATENCY
+
+# Setup Configuration
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+# Start Prometheus Metrics Server on port 8000
+try:
+    start_http_server(8000)
+except OSError:
+    pass # Server already started
 
 # Page configuration
 st.set_page_config(
@@ -63,18 +85,6 @@ st.markdown("""
     .bot-message strong {
         color: #b794f6;
     }
-    .exam-card {
-        background-color: #1e1e1e;
-        padding: 1.5rem;
-        border-radius: 10px;
-        border: 1px solid #333;
-        margin-bottom: 1rem;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-    }
-    .exam-card h3 {
-        color: #764ba2;
-        margin-top: 0;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -105,7 +115,7 @@ def get_text_chunks(text):
         chunk_size=1000,
         chunk_overlap=200,
         length_function=len,
-        separators=["\n\n", "\n", " ", ""]
+        separators=["\\n\\n", "\\n", " ", ""]
     )
     chunks = text_splitter.split_text(text)
     return chunks
@@ -113,20 +123,15 @@ def get_text_chunks(text):
 
 def get_vectorstore(text_chunks):
     """Create ChromaDB vector store with embeddings"""
-    # Use a persistent directory for ChromaDB
     persist_directory = "./chroma_db"
     
-    # Create embeddings using Ollama
     embeddings = OllamaEmbeddings(
-        model="deepseek-r1:1.5b",  # Using DeepSeek model via Ollama
-        base_url="http://localhost:11434"
+        model="deepseek-r1:1.5b",
+        base_url=OLLAMA_BASE_URL
     )
     
-    # Create unique collection name based on timestamp
-    import time
     collection_name = f"documents_{int(time.time())}"
     
-    # Create ChromaDB vector store
     vectorstore = Chroma.from_texts(
         texts=text_chunks,
         embedding=embeddings,
@@ -139,21 +144,18 @@ def get_vectorstore(text_chunks):
 
 def get_conversation_chain(vectorstore):
     """Create conversational retrieval chain with DeepSeek LLM"""
-    # Initialize DeepSeek LLM via Ollama
     llm = Ollama(
         model="deepseek-r1:1.5b",
-        base_url="http://localhost:11434",
+        base_url=OLLAMA_BASE_URL,
         temperature=0.7
     )
     
-    # Create conversation memory
     memory = ConversationBufferMemory(
         memory_key='chat_history',
         return_messages=True,
         output_key='answer'
     )
     
-    # Create conversational retrieval chain
     conversation_chain = ConversationalRetrievalChain.from_llm(
         llm=llm,
         retriever=vectorstore.as_retriever(search_kwargs={"k": 3}),
@@ -164,113 +166,19 @@ def get_conversation_chain(vectorstore):
     return conversation_chain
 
 
-def generate_mcq_questions(text_chunks, num_questions=5):
-    """Generate Multiple Choice Questions from document chunks"""
-    llm = Ollama(
-        model="deepseek-r1:1.5b",
-        base_url="http://localhost:11434",
-        temperature=0.7
-    )
-    
-    context = "\n\n".join(text_chunks[:10])
-    
-    prompt = f"""Based on the following document content, generate {num_questions} multiple choice questions (MCQs).
-    
-    Format the output exactly like this using Markdown:
-    
-    ### Question 1
-    [The Question content]
-    - A) [Option 1]
-    - B) [Option 2]
-    - C) [Option 3]
-    - D) [Option 4]
-    
-    **Correct Answer:** [Option] - [Explanation]
-    
-    ---
-    
-    [Repeat for all questions]
-    
-    Document Content:
-    {context[:3000]}
-    """
-    
-    response = llm(prompt)
-    return clean_llm_response(response)
-
-
-def generate_essay_questions(text_chunks, num_questions=3):
-    """Generate Essay Questions from document chunks"""
-    llm = Ollama(
-        model="deepseek-r1:1.5b",
-        base_url="http://localhost:11434",
-        temperature=0.7
-    )
-    
-    context = "\n\n".join(text_chunks[:10])
-    
-    prompt = f"""Based on the following document content, generate {num_questions} thought-provoking essay questions.
-    
-    Format the output exactly like this using Markdown:
-    
-    ### Question 1
-    **[Question Title/Topic]**
-    > [The detailed question content asking for analysis or explanation]
-    
-    *Key points to cover in answer: [Brief list of expected points]*
-    
-    ---
-    
-    [Repeat for all questions]
-    
-    Document Content:
-    {context[:3000]}
-    """
-    
-    response = llm(prompt)
-    return clean_llm_response(response)
-
-
-def generate_flashcards(text_chunks, num_cards=10):
-    """Generate Flashcards from document chunks"""
-    llm = Ollama(
-        model="deepseek-r1:1.5b",
-        base_url="http://localhost:11434",
-        temperature=0.7
-    )
-    
-    context = "\n\n".join(text_chunks[:10])
-    
-    prompt = f"""Based on the following document content, generate {num_cards} flashcards.
-    
-    Format the output exactly like this using Markdown:
-    
-    ### Card 1
-    **Front:** [Concept or Question]
-    **Back:** [Definition or Answer]
-    
-    ---
-    
-    [Repeat for all cards]
-    
-    Document Content:
-    {context[:3000]}
-    """
-    
-    response = llm(prompt)
-    return clean_llm_response(response)
-
-
 def handle_user_input(user_question):
     """Process user questions and display responses"""
     if st.session_state.conversation is None:
         st.warning("⚠️ Please upload and process documents first!")
         return
     
+    REQUEST_COUNT.inc()
     with st.spinner("🤔 Thinking..."):
         try:
+            start_time = time.time()
             response = st.session_state.conversation({'question': user_question})
             answer = clean_llm_response(response['answer'])
+            LLM_LATENCY.observe(time.time() - start_time)
             st.session_state.chat_history.append({
                 'question': user_question,
                 'answer': answer
@@ -279,16 +187,13 @@ def handle_user_input(user_question):
             st.error(f"Error processing question: {str(e)}")
             return
     
-    # Display chat history (newest first)
     for i, message in enumerate(reversed(st.session_state.chat_history)):
-        # User message
         st.markdown(f"""
         <div class="chat-message user-message">
             <strong>👤 You:</strong><br>{message['question']}
         </div>
         """, unsafe_allow_html=True)
         
-        # Bot message
         st.markdown(f"""
         <div class="chat-message bot-message">
             <strong>🤖 DocMind:</strong><br>{message['answer']}
@@ -298,26 +203,14 @@ def handle_user_input(user_question):
 
 def main():
     """Main application function"""
-    # Header
     st.markdown('<h1 class="main-header">🧠 DocMind</h1>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">AI-Powered Document Intelligence | Powered by DeepSeek, LangChain & ChromaDB</p>', unsafe_allow_html=True)
     
-    # Initialize session state
     if "conversation" not in st.session_state:
         st.session_state.conversation = None
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
-    if "text_chunks" not in st.session_state:
-        st.session_state.text_chunks = None
-    # Initialize exam session state
-    if "exam_mcqs" not in st.session_state:
-        st.session_state.exam_mcqs = None
-    if "exam_essays" not in st.session_state:
-        st.session_state.exam_essays = None
-    if "exam_flashcards" not in st.session_state:
-        st.session_state.exam_flashcards = None
     
-    # Sidebar for document upload
     with st.sidebar:
         st.header("📄 Document Upload")
         st.markdown("---")
@@ -325,8 +218,7 @@ def main():
         pdf_docs = st.file_uploader(
             "Upload your PDF documents",
             accept_multiple_files=True,
-            type=['pdf'],
-            help="Upload one or more PDF files to analyze"
+            type=['pdf']
         )
         
         if st.button("🚀 Process Documents"):
@@ -335,26 +227,18 @@ def main():
             else:
                 with st.spinner("Processing your documents..."):
                     try:
-                        # Extract text from PDFs
-                        st.info("📖 Extracting text from PDFs...")
                         raw_text = get_pdf_text(pdf_docs)
                         
                         if not raw_text.strip():
                             st.error("No text found in the uploaded documents!")
                             return
                         
-                        # Split text into chunks
-                        st.info("✂️ Splitting text into chunks...")
+                        process_start_time = time.time()
                         text_chunks = get_text_chunks(raw_text)
-                        st.session_state.text_chunks = text_chunks  # Store for exam generation
+                        PROCESSING_TIME.observe(time.time() - process_start_time)
+                        
                         st.success(f"Created {len(text_chunks)} text chunks")
-                        
-                        # Create vector store
-                        st.info("🔮 Creating vector embeddings with ChromaDB...")
                         vectorstore = get_vectorstore(text_chunks)
-                        
-                        # Create conversation chain
-                        st.info("🔗 Initializing conversation chain...")
                         st.session_state.conversation = get_conversation_chain(vectorstore)
                         
                         st.success("✅ Documents processed successfully! You can now ask questions.")
@@ -367,10 +251,8 @@ def main():
         ### 📊 Features
         - 🔍 Conversational Document Search
         - 🧠 AI-Powered Q&A
-        - 📚 Multi-Document Support
         - 🎯 RAG Architecture
         - ⚡ Real-time Responses
-        - 📝 Exam Generation (MCQ, Essay, Flashcards)
         """)
         
         st.markdown("---")
@@ -382,97 +264,32 @@ def main():
         - **UI:** Streamlit
         """)
     
-    # Create tabs for different features
-    tab1, tab2 = st.tabs(["💬 Document Chat", "📝 Exam Generation"])
+    st.markdown("### 💬 Chat with Your Documents")
     
-    with tab1:
-        st.markdown("### 💬 Chat with Your Documents")
-        
-        user_question = st.text_input(
-            "Ask a question about your documents:",
-            placeholder="e.g., What is the main topic of these documents?",
-            key="user_input"
-        )
-        
-        if user_question:
-            handle_user_input(user_question)
-        
-        # Display instructions if no conversation started
-        if st.session_state.conversation is None:
-            st.info("""
-            👋 **Welcome to DocMind!**
-            
-            To get started:
-            1. Upload your PDF documents using the sidebar
-            2. Click "Process Documents" to analyze them
-            3. Ask questions about your documents in the chat box above
-            
-            **Note:** Make sure Ollama is running with the DeepSeek model installed:
-            ```bash
-            ollama pull deepseek-r1:1.5b
-            ollama serve
-            ```
-            """)
+    user_question = st.text_input(
+        "Ask a question about your documents:",
+        placeholder="e.g., What is the main topic of these documents?",
+        key="user_input"
+    )
     
-    with tab2:
-        st.markdown("### 📝 AI-Powered Exam Generation")
+    if user_question:
+        handle_user_input(user_question)
+    
+    if st.session_state.conversation is None:
+        st.info("""
+        👋 **Welcome to DocMind!**
         
-        if "text_chunks" not in st.session_state or st.session_state.text_chunks is None:
-            st.warning("⚠️ Please upload and process documents first to generate exams!")
-        else:
-            st.info("🎓 Generate exams, quizzes, and study materials from your documents")
-            
-            # Controls Area
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.markdown("#### 📋 Multiple Choice")
-                num_mcq = st.slider("Number of MCQs", 3, 10, 5, key="mcq_slider")
-                if st.button("Generate MCQs", key="gen_mcq"):
-                    with st.spinner("Generating MCQ questions..."):
-                        try:
-                            response = generate_mcq_questions(st.session_state.text_chunks, num_mcq)
-                            st.session_state.exam_mcqs = response
-                        except Exception as e:
-                            st.error(f"Error: {str(e)}")
-            
-            with col2:
-                st.markdown("#### ✍️ Essay Questions")
-                num_essay = st.slider("Number of Questions", 2, 5, 3, key="essay_slider")
-                if st.button("Generate Essays", key="gen_essay"):
-                    with st.spinner("Generating essay questions..."):
-                        try:
-                            response = generate_essay_questions(st.session_state.text_chunks, num_essay)
-                            st.session_state.exam_essays = response
-                        except Exception as e:
-                            st.error(f"Error: {str(e)}")
-            
-            with col3:
-                st.markdown("#### 🎴 Flashcards")
-                num_cards = st.slider("Number of Cards", 5, 15, 10, key="card_slider")
-                if st.button("Generate Flashcards", key="gen_cards"):
-                    with st.spinner("Generating flashcards..."):
-                        try:
-                            response = generate_flashcards(st.session_state.text_chunks, num_cards)
-                            st.session_state.exam_flashcards = response
-                        except Exception as e:
-                            st.error(f"Error: {str(e)}")
-            
-            st.markdown("---")
-            
-            # Display Results (Full Width)
-            if st.session_state.exam_mcqs:
-                with st.expander("📋 Multiple Choice Questions", expanded=True):
-                    st.markdown(st.session_state.exam_mcqs)
-                    
-            if st.session_state.exam_essays:
-                with st.expander("✍️ Essay Questions", expanded=True):
-                    st.markdown(st.session_state.exam_essays)
-                    
-            if st.session_state.exam_flashcards:
-                with st.expander("🎴 Flashcards", expanded=True):
-                    st.markdown(st.session_state.exam_flashcards)
-
+        To get started:
+        1. Upload your PDF documents using the sidebar
+        2. Click "Process Documents" to analyze them
+        3. Ask questions about your documents in the chat box above
+        
+        **Note:** Make sure Ollama is running with the DeepSeek model installed:
+        ```bash
+        ollama pull deepseek-r1:1.5b
+        ollama serve
+        ```
+        """)
 
 if __name__ == '__main__':
     main()

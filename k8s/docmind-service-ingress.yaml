@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: docmind-service
+  namespace: docmind
+  labels:
+    app: docmind
+spec:
+  selector:
+    app: docmind
+  ports:
+  - port: 80
+    targetPort: 8501
+    name: http
+  - port: 8000
+    targetPort: 8000
+    name: metrics
+  type: LoadBalancer # Using LoadBalancer to directly expose it for this project
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: docmind-ingress
+  namespace: docmind
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m" # Allow large document uploads
+spec:
+  rules:
+  - host: docmind.example.local # Map this in /etc/hosts for local testing
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: docmind-service
+            port:
+              number: 80

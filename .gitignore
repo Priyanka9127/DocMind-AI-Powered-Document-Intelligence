@@ -28,7 +28,7 @@ venv/
 ENV/
 env/
 
-# ChromaDB
+# Vector Database (Local Data)
 chroma_db/
 *.db
 
@@ -48,6 +48,26 @@ Thumbs.db
 
 # Logs
 *.log
+crash.txt
 
 # Environment variables
 .env
+.env.*
+
+# Kubernetes Local Data
+kubeconfig.yaml
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc

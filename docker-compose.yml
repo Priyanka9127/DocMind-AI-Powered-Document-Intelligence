@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  docmind:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+      - "8000:8000"
+    volumes:
+      - ./chroma_db:/app/chroma_db
+    environment:
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+    # Note: When running locally, accessing Ollama on the host machine from inside the docker container
+    # typically requires using host.docker.internal depending on the OS setup.
